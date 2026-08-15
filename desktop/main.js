@@ -1,8 +1,9 @@
 'use strict'
-const { app, BrowserWindow, ipcMain, screen, Menu } = require('electron')
+const { app, BrowserWindow, ipcMain, screen } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
+const { execFile } = require('child_process')
 
 const DSH_API = process.env.DSH_WEB_URL || 'http://127.0.0.1:3080'
 const PETS_DIR = process.env.DSH_PETS || path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'pets')
@@ -12,6 +13,16 @@ let win = null
 let config = {}
 let pollTimer = null
 let petList = []
+
+// ---------- taskbar hiding (Windows native fallback) ----------
+function applyToolWindow(hwnd) {
+  const GWL_EXSTYLE = -20
+  const WS_EX_TOOLWINDOW = 0x00000080
+  execFile('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-Command',
+    `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class P{[DllImport("user32.dll")]public static extern int GetWindowLong(IntPtr h,int i);[DllImport("user32.dll")]public static extern int SetWindowLong(IntPtr h,int i,int v);}'; $h=[IntPtr]${hwnd}; $e=[P]::GetWindowLong($h,-20); [P]::SetWindowLong($h,-20,($e -bor 0x80))`
+  ], { windowsHide: true }, () => {})
+}
 
 // ---------- config ----------
 function loadConfig() {
@@ -97,7 +108,7 @@ function createWindow() {
     resizable: false,
     hasShadow: false,
     alwaysOnTop: config.alwaysOnTop !== false,
-    skipTaskbar: false,
+    skipTaskbar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -107,6 +118,21 @@ function createWindow() {
   })
 
   win.setAlwaysOnTop(config.alwaysOnTop !== false, 'screen-saver')
+  // Transparent windows can lose the skipTaskbar style on Windows; force it
+  // both via the Electron API and by re-applying WS_EX_TOOLWINDOW after show.
+  win.setSkipTaskbar(true)
+  win.webContents.once('did-finish-load', () => {
+    setTimeout(() => {
+      if (!win || win.isDestroyed()) return
+      try {
+        const hwndBuf = win.getNativeWindowHandle()
+        if (hwndBuf && hwndBuf.length >= 4) {
+          const handle = hwndBuf.readInt32LE(0) & 0xffffffff
+          applyToolWindow(handle)
+        }
+      } catch { /* ignore */ }
+    }, 500)
+  })
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'))
   win.setIgnoreMouseEvents(config.clickThrough === true, { forward: true })
 
