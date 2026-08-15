@@ -87,7 +87,9 @@ function loadConfig() {
 }
 
 function saveConfig(patch) {
-  return window.petHost.saveConfig(patch || {}).then((c) => { state.config = c || {} })
+  // Shared settings (alwaysOnTop / clickThrough / skin / speed / ...) write
+  // back to pet.json via saveShared; desktop-only position uses saveDesktop.
+  return window.petHost.saveShared(patch || {}).then((c) => { state.config = c || {} })
 }
 
 // ---------- skin loading ----------
@@ -178,6 +180,24 @@ async function applyActiveSkin() {
   } catch (e) {
     console.error('applyActiveSkin failed', e)
   }
+}
+
+/** Apply a merged-config update coming from the main process (web panel edits, etc.). */
+function applyConfig(next) {
+  if (!next) return
+  console.log('pet-config: apply', JSON.stringify({ name: next.name, scale: next.scale, speed: next.animationSpeed, top: next.alwaysOnTop, through: next.clickThrough, anim: next.animationEnabled, random: next.randomEnabled, idleSec: next.idleFrequencySec, hide: next.hideWhenIdle }))
+  const prevName = state.config.name
+  const prevScale = state.config.scale
+  const prevActive = state.active
+  state.config = next || {}
+  const wants = (next.name && state.pets.some((p) => p.dir === next.name)) ? next.name : state.active
+  if (wants !== state.active) {
+    state.active = wants
+    if (state.active) applyActiveSkin()
+  } else if (prevScale !== next.scale || (prevName !== next.name && next.name === state.active)) {
+    if (state.active) applyActiveSkin()
+  }
+  syncMenuLabels()
 }
 
 function showFrame(row, frame) {
@@ -430,6 +450,45 @@ setInterval(() => {
   }
 }, 30)
 
+// ---------- random idle behavior (randomEnabled / idleFrequencySec) ----------
+setInterval(() => {
+  if (!state.config.randomEnabled) return
+  const now = Date.now()
+  if (drag || anim.queue.length || anim.sleeping || state.phase !== 'idle') return
+  const r = Math.random()
+  if (r < 0.35) {
+    anim.walkDir = Math.random() < 0.5 ? -1 : 1
+    anim.walkUntil = now + 1800 + Math.random() * 2200
+  } else if (r < 0.5) {
+    playSeq([[Math.random() < 0.5 ? 3 : 4, 900]])
+  }
+}, Math.max(8000, (state.config.idleFrequencySec || 15) * 1000))
+
+// ---------- hideWhenIdle: fade the pet out after long idle (desktop keeps window) ----------
+let idleHidden = false
+const summonEl = (() => {
+  const el = document.createElement('div')
+  el.className = 'summon'
+  el.textContent = '🐾 召唤桌宠'
+  el.style.cssText = 'position:absolute;left:50%;bottom:12px;transform:translateX(-50%);background:rgba(18,20,26,.92);color:#9ecbff;border:1px solid rgba(255,255,255,.16);border-radius:14px;padding:8px 14px;font:13px ui-sans-serif,system-ui,sans-serif;box-shadow:0 6px 20px rgba(0,0,0,.4);cursor:pointer;display:none;z-index:20;pointer-events:auto;'
+  el.addEventListener('click', () => {
+    idleHidden = false
+    petImg.style.visibility = 'visible'
+    el.style.display = 'none'
+    lastEventAt = Date.now()
+  })
+  document.body.appendChild(el)
+  return el
+})()
+setInterval(() => {
+  if (!state.config.hideWhenIdle || state.phase !== 'idle') return
+  if (Date.now() - lastEventAt > 120000 && !idleHidden) {
+    idleHidden = true
+    petImg.style.visibility = 'hidden'
+    summonEl.style.display = 'block'
+  }
+}, 5000)
+
 // ---------- interaction ----------
 petImg.addEventListener('mousedown', (e) => {
   if (e.button !== 0 || state.config.clickThrough) return
@@ -498,6 +557,7 @@ document.addEventListener('click', (e) => {
     await refreshPets()
     console.log('pet-init: pets', state.pets.map((p) => p.dir).join(','), 'active', state.active)
     window.petHost.onState((d) => applyState(d))
+    window.petHost.onConfig((c) => applyConfig(c))
     const d = await window.petHost.state()
     applyState(d)
     setInterval(() => {

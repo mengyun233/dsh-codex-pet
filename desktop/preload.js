@@ -4,7 +4,8 @@ const { contextBridge, ipcRenderer } = require('electron')
 contextBridge.exposeInMainWorld('petHost', {
   list: () => ipcRenderer.invoke('pet:list'),
   getConfig: () => ipcRenderer.invoke('pet:getConfig'),
-  saveConfig: (patch) => ipcRenderer.invoke('pet:saveConfig', patch),
+  saveDesktop: (patch) => ipcRenderer.invoke('pet:saveDesktop', patch),
+  saveShared: (patch) => ipcRenderer.invoke('pet:saveShared', patch),
   moveBy: (dx, dy) => ipcRenderer.invoke('pet:moveBy', dx, dy),
   state: () => ipcRenderer.invoke('pet:state'),
   sheet: (dir) => ipcRenderer.invoke('pet:sheet', dir),
@@ -14,5 +15,10 @@ contextBridge.exposeInMainWorld('petHost', {
     const listener = (_e, d) => fn(d)
     ipcRenderer.on('pet:state', listener)
     return () => ipcRenderer.removeListener('pet:state', listener)
+  },
+  onConfig: (fn) => {
+    const listener = (_e, c) => fn(c)
+    ipcRenderer.on('pet:config', listener)
+    return () => ipcRenderer.removeListener('pet:config', listener)
   }
 })

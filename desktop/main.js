@@ -6,12 +6,18 @@ const os = require('os')
 const { execFile } = require('child_process')
 
 const DSH_API = process.env.DSH_WEB_URL || 'http://127.0.0.1:3080'
-const PETS_DIR = process.env.DSH_PETS || path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'pets')
-const CONFIG_PATH = path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'pet.desktop.json')
+const DSH_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
+const PETS_DIR = process.env.DSH_PETS || path.join(DSH_HOME, 'pets')
+// Shared settings written by the DSH web settings panel (pet.json -> codexPet).
+const SHARED_CFG_PATH = path.join(DSH_HOME, 'pet.json')
+// Desktop-only settings (window position) kept separate.
+const CONFIG_PATH = path.join(DSH_HOME, 'pet.desktop.json')
 
 let win = null
-let config = {}
+let config = {}          // merged view: shared codexPet + desktop position
+let desktopOnly = {}     // pet.desktop.json (x/y)
 let pollTimer = null
+let configWatchTimer = null
 let petList = []
 
 // ---------- taskbar hiding (Windows native fallback) ----------
@@ -25,21 +31,61 @@ function applyToolWindow(hwnd) {
 }
 
 // ---------- config ----------
-function loadConfig() {
+function readJsonFile(file) {
   try {
-    config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) || {}
+    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''))
   } catch {
-    config = {}
+    return null
   }
-  return config
 }
 
-function saveConfig() {
+/** Shared settings from the DSH web panel ($DSH_HOME/pet.json -> codexPet). */
+function readSharedConfig() {
+  const data = readJsonFile(SHARED_CFG_PATH)
+  return (data && typeof data.codexPet === 'object' && data.codexPet) || {}
+}
+
+function loadDesktopOnly() {
+  desktopOnly = readJsonFile(CONFIG_PATH) || {}
+  return desktopOnly
+}
+
+function saveDesktopOnly() {
   try {
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf8')
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(desktopOnly, null, 2), 'utf8')
   } catch (e) {
-    console.error('pet.desktop: save config failed', e)
+    console.error('pet.desktop: save desktop config failed', e)
   }
+}
+
+/** Merge shared codexPet settings with desktop-only position. */
+function mergeConfig() {
+  return { ...readSharedConfig(), ...desktopOnly }
+}
+
+/** Send current merged config to the renderer. */
+function pushConfig() {
+  if (win && !win.isDestroyed()) win.webContents.send('pet:config', config)
+}
+
+/** Apply window-level settings (scale / alwaysOnTop / clickThrough). */
+function applyWindowSettings() {
+  if (!win || win.isDestroyed()) return
+  const scale = typeof config.scale === 'number' ? config.scale : 1
+  win.setSize(Math.round(scale * 260), Math.round(scale * 300))
+  win.setAlwaysOnTop(config.alwaysOnTop !== false, 'screen-saver')
+  win.setIgnoreMouseEvents(config.clickThrough === true, { forward: true })
+}
+
+/** Refresh merged config from disk and push changes to the renderer. */
+function reloadConfig() {
+  const next = mergeConfig()
+  const prevKey = JSON.stringify(config)
+  const nextKey = JSON.stringify(next)
+  if (prevKey === nextKey) return
+  config = next
+  applyWindowSettings()
+  pushConfig()
 }
 
 // ---------- pet list from DSH pets dir ----------
@@ -95,11 +141,13 @@ function pollState() {
 // ---------- window ----------
 function createWindow() {
   const { workArea } = screen.getPrimaryDisplay()
-  loadConfig()
+  loadDesktopOnly()
+  config = mergeConfig()
+  const scale = typeof config.scale === 'number' ? config.scale : 1
 
   win = new BrowserWindow({
-    width: Math.round((config.scale || 1) * 260),
-    height: Math.round((config.scale || 1) * 300),
+    width: Math.round(scale * 260),
+    height: Math.round(scale * 300),
     x: config.x ?? workArea.x + workArea.width - 320,
     y: config.y ?? workArea.y + workArea.height - 360,
     transparent: true,
@@ -154,20 +202,34 @@ function createWindow() {
 // ---------- IPC ----------
 ipcMain.handle('pet:list', () => scanPets())
 ipcMain.handle('pet:getConfig', () => {
-  loadConfig()
+  config = mergeConfig()
   return config
 })
-ipcMain.handle('pet:saveConfig', (_e, patch) => {
-  config = { ...config, ...(patch || {}) }
-  saveConfig()
-  if (win && !win.isDestroyed()) {
-    if (typeof config.alwaysOnTop === 'boolean') win.setAlwaysOnTop(config.alwaysOnTop, 'screen-saver')
-    if (typeof config.clickThrough === 'boolean') win.setIgnoreMouseEvents(config.clickThrough, { forward: true })
-    if (typeof config.x === 'number' && typeof config.y === 'number') win.setPosition(Math.round(config.x), Math.round(config.y))
-    if (typeof patch.scale === 'number') {
-      win.setSize(Math.round(patch.scale * 260), Math.round(patch.scale * 300))
-    }
+// Desktop-only settings (position) persisted to pet.desktop.json; shared
+// settings live in pet.json and are owned by the web settings panel.
+ipcMain.handle('pet:saveDesktop', (_e, patch) => {
+  desktopOnly = { ...desktopOnly, ...(patch || {}) }
+  saveDesktopOnly()
+  config = mergeConfig()
+  applyWindowSettings()
+  pushConfig()
+  return config
+})
+// Menu toggles in the desktop app write back to the SHARED settings
+// (pet.json -> codexPet) so web and desktop modes always agree.
+ipcMain.handle('pet:saveShared', (_e, patch) => {
+  const shared = readSharedConfig()
+  Object.assign(shared, patch || {})
+  try {
+    const whole = readJsonFile(SHARED_CFG_PATH) || {}
+    whole.codexPet = shared
+    fs.writeFileSync(SHARED_CFG_PATH, JSON.stringify(whole, null, 2), 'utf8')
+  } catch (e) {
+    console.error('pet.desktop: save shared config failed', e)
   }
+  config = mergeConfig()
+  applyWindowSettings()
+  pushConfig()
   return config
 })
 ipcMain.handle('pet:moveBy', (_e, dx, dy) => {
@@ -176,9 +238,9 @@ ipcMain.handle('pet:moveBy', (_e, dx, dy) => {
   const nx = Math.round(wx + (Number.isFinite(dx) ? dx : 0))
   const ny = Math.round(wy + (Number.isFinite(dy) ? dy : 0))
   win.setPosition(nx, ny)
-  config.x = nx
-  config.y = ny
-  saveConfig()
+  desktopOnly.x = nx
+  desktopOnly.y = ny
+  saveDesktopOnly()
 })
 ipcMain.handle('pet:state', async () => {
   try {
@@ -212,6 +274,8 @@ app.whenReady().then(() => {
   createWindow()
   pollState()
   pollTimer = setInterval(pollState, 1000)
+  // Watch the shared web-panel settings so changes apply live to the desktop pet.
+  configWatchTimer = setInterval(reloadConfig, 1500)
 })
 
 app.on('window-all-closed', () => {
@@ -220,4 +284,5 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   if (pollTimer) clearInterval(pollTimer)
+  if (configWatchTimer) clearInterval(configWatchTimer)
 })
