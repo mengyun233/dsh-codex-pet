@@ -1,0 +1,6 @@
+# dsh-codex-pet bundle patch: one insert row activating the Codex pet plugin.
+# Applied as part of the profile composition; the user's cordis.patch.yml can
+# address this row by id for per-row overrides.
+- insert:
+    - id: codex-pet
+      name: 'dsh-codex-pet'

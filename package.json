@@ -1,0 +1,31 @@
+{
+  "name": "dsh-codex-pet",
+  "version": "0.1.0",
+  "description": "Codex desktop-pet skins migrated into DSH: auto-detects community Codex pet skins, copies them into the DSH home, and renders an animated desktop pet with per-session status dialogs and a settings section.",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "codex",
+    "desktop-pet"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "license": "MIT"
+}
