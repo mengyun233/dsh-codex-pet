@@ -1,5 +1,5 @@
 'use strict'
-const { app, BrowserWindow, ipcMain, screen } = require('electron')
+const { app, BrowserWindow, ipcMain, screen, shell } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
@@ -72,7 +72,7 @@ function pushConfig() {
 function applyWindowSettings() {
   if (!win || win.isDestroyed()) return
   const scale = typeof config.scale === 'number' ? config.scale : 1
-  win.setSize(Math.round(scale * 260), Math.round(scale * 300))
+  win.setSize(Math.max(262, Math.round(280 * scale)), Math.max(180, Math.round(340 * scale)))
   win.setAlwaysOnTop(config.alwaysOnTop !== false, 'screen-saver')
   win.setIgnoreMouseEvents(config.clickThrough === true, { forward: true })
 }
@@ -146,8 +146,11 @@ function createWindow() {
   const scale = typeof config.scale === 'number' ? config.scale : 1
 
   win = new BrowserWindow({
-    width: Math.round(scale * 260),
-    height: Math.round(scale * 300),
+    // Window must fit the pet sprite AND the 240px dialogs anchored under its
+    // feet. Base design size is 280x340; never shrink below 262 wide so the
+    // 240px dialogs stay fully visible.
+    width: Math.max(262, Math.round(280 * scale)),
+    height: Math.max(180, Math.round(340 * scale)),
     x: config.x ?? workArea.x + workArea.width - 320,
     y: config.y ?? workArea.y + workArea.height - 360,
     transparent: true,
@@ -215,6 +218,15 @@ ipcMain.handle('pet:saveDesktop', (_e, patch) => {
   pushConfig()
   return config
 })
+// The renderer tells us the pet sprite's real footprint so the window exactly
+// fits sprite + dialog strip (no clipping at small scales).
+ipcMain.handle('pet:fitWindow', (_e, spriteW, spriteH, maxGap) => {
+  if (!win || win.isDestroyed()) return
+  const scale = typeof config.scale === 'number' ? config.scale : 1
+  const w = Math.max(262, Math.round((spriteW || 260) + 16))
+  const h = Math.max(180, Math.round((spriteH || 300) + (maxGap || 0) + 60))
+  win.setSize(w, h)
+})
 // Menu toggles in the desktop app write back to the SHARED settings
 // (pet.json -> codexPet) so web and desktop modes always agree.
 ipcMain.handle('pet:saveShared', (_e, patch) => {
@@ -248,6 +260,31 @@ ipcMain.handle('pet:state', async () => {
     if (r.ok) return r.json()
   } catch { /* not running */ }
   return null
+})
+// Double-click on a dialog: open the DSH web app at that session (same as the
+// web overlay's jump-to-session behavior).
+ipcMain.handle('pet:openSession', async (_e, sessionId) => {
+  if (!sessionId) return { ok: false }
+  try {
+    await shell.openExternal(`${DSH_API}/?session=${encodeURIComponent(sessionId)}`)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) }
+  }
+})
+// Stop button: actually cancel the agent via the DSH host API.
+ipcMain.handle('pet:stopSession', async (_e, sessionId) => {
+  try {
+    const r = await fetch(`${DSH_API}/dsh-pets/api/stop`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(sessionId ? { sessionId } : {})
+    })
+    if (r.ok) return r.json()
+    return { ok: false }
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) }
+  }
 })
 ipcMain.handle('pet:sheet', (_e, dir) => {
   const p = path.join(PETS_DIR, dir || '', 'spritesheet.webp')

@@ -169,12 +169,15 @@ async function applyActiveSkin() {
     const g = deriveGrid(img.naturalWidth, img.naturalHeight)
     const fr = buildFrames(img, g, scale)
     Object.assign(frames, fr)
-    // position pet at bottom-left of the window, ground-aligned
+    // position pet with its feet just above the dialog strip at the window
+    // bottom (strip starts ~52px from the bottom)
     petImg.style.width = frames.w + 'px'
     petImg.style.height = frames.h + 'px'
     anim.x = Math.max(0, Math.round((window.innerWidth - frames.w) / 2))
     petImg.style.left = anim.x + 'px'
-    petImg.style.top = (window.innerHeight - frames.h - frames.maxGap) + 'px'
+    petImg.style.top = (window.innerHeight - frames.h - frames.maxGap - 56) + 'px'
+    // ask main to size the window to exactly fit sprite + dialog strip
+    window.petHost.fitWindow(frames.w, frames.h, frames.maxGap).catch(() => {})
     lastDrawn = { row: -1, frame: -1 }
     showFrame(anim.row, anim.frame)
   } catch (e) {
@@ -217,7 +220,12 @@ function playSeq(rows) {
 function renderDialogs() {
   const sorted = (state.sessions || []).slice().sort((a, b) => (b.at || 0) - (a.at || 0))
   const shown = sorted.filter((ss) => ss.phase !== 'idle' && !dismissed[ss.id]).slice(0, 5)
-  const petBottom = window.innerHeight - 6
+
+  // Dialogs live in a fixed strip at the window bottom (last ~56px), anchored
+  // to the pet's horizontal center. The pet sprite is drawn above this strip.
+  const dialogLeft = clamp(window.innerWidth / 2, 130, Math.max(130, window.innerWidth - 130))
+  const stripBottom = window.innerHeight - 6
+
   dialogsEl.innerHTML = ''
   shown.forEach((ss, idx) => {
     const isCollapsed = !!collapsed[ss.id]
@@ -227,11 +235,13 @@ function renderDialogs() {
     const activeTxt = isActivePhase(ss.phase)
     const activity = isCollapsed ? '' : (activeTxt && ss.text ? ss.text : (phaseBubbleText(ss.phase, ss.phrase) || '正在待机'))
     const rowH = isCollapsed ? 24 : 46
-    const top = Math.max(4, petBottom - idx * (rowH + 6))
+    const top = Math.max(4, stripBottom - (rowH + 6) - idx * (rowH + 6))
 
     const dlg = document.createElement('div')
     dlg.className = 'dialog' + (isCollapsed ? ' collapsed' : '')
     dlg.style.top = top + 'px'
+    dlg.style.left = dialogLeft + 'px'
+    dlg.style.transform = 'translateX(-50%)'
     dlg.dataset.sid = ss.id
     dlg.onmouseenter = () => { hoverId = ss.id; renderDialogs() }
     dlg.onmouseleave = () => { hoverId = null; renderDialogs() }
@@ -253,6 +263,9 @@ function renderDialogs() {
       if (t) { clearTimeout(t); delete clickTimers[ss.id] }
       dismissed[ss.id] = true
       renderDialogs()
+      // Jump to the session in the DSH web app (same as the web overlay),
+      // then the bubble stays dismissed until that session turns active again.
+      if (ss.id) window.petHost.openSession(ss.id).catch(() => {})
     }
 
     const body = document.createElement('div')
@@ -276,8 +289,11 @@ function renderDialogs() {
       stop.textContent = '⏹'
       stop.onclick = (e) => {
         e.stopPropagation()
-        window.petHost.state().then(() => {})
-        setBubble('已停止')
+        window.petHost.stopSession(ss.id).then((r) => {
+          setBubble((r && r.ok) ? '已停止' : '无法停止')
+        }).catch(() => {
+          setBubble('停止失败')
+        })
         setTimeout(() => setBubble(null), 1500)
       }
       dlg.appendChild(stop)
