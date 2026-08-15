@@ -4,6 +4,8 @@
 
 ![pet](docs/pet-demo.webp)
 
+> **图片来源声明**：示例图中的鲸鱼娘皮肤图片来源于网络分享，仅用于演示本项目功能，版权归原作者所有；如涉及侵权，请联系作者删除。
+
 ## 特性
 
 - **自动迁移 Codex 皮肤**：自动扫描 `CODEX_HOME`（及 `LOCALAPPDATA/APPDATA` 下的 Codex 路径）中的社区皮肤（`pet.json` + `spritesheet.webp`），拷贝到 DSH 家目录，无需手动操作。
