@@ -1,0 +1,15 @@
+{
+  "name": "dsh-codex-pet-desktop",
+  "version": "0.1.0",
+  "description": "Standalone desktop shell for dsh-codex-pet: renders the migrated Codex pet outside the browser in a transparent always-on-top window.",
+  "main": "main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  },
+  "license": "MIT"
+}

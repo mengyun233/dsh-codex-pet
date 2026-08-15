@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; script-src 'self'" />
+  <title>Codex Pet</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="pet-wrap" class="pet-wrap">
+    <img id="pet" class="pet" alt="" draggable="false" />
+    <div id="bubble" class="bubble" hidden></div>
+    <div id="dialogs"></div>
+  </div>
+  <div id="menu" class="menu" hidden>
+    <div class="menu-title" id="menu-title"></div>
+    <button data-act="walk">随机散步</button>
+    <button data-act="pet">摸摸</button>
+    <button data-act="toggle-top">置顶: 开</button>
+    <button data-act="toggle-through">点击穿透: 关</button>
+    <button data-act="refresh">重新扫描皮肤</button>
+    <button data-act="quit">退出桌宠</button>
+  </div>
+  <script src="renderer.js"></script>
+</body>
+</html>

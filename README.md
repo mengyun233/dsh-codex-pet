@@ -37,7 +37,19 @@ dsh plugin --profile web add dsh-codex-pet
 
 3. 重启 DSH，桌宠出现在页面右下角；设置 → 桌宠 可调整。
 
-### 方式二：动态插件（开发调试）
+### 方式二：独立桌面应用（脱离网页，桌面上动）
+
+桌宠也可以脱离浏览器，作为独立的透明置顶窗口显示在桌面上（需要已通过方式一迁移好皮肤）：
+
+```bash
+cd desktop
+npm install        # 首次需要（安装 Electron）
+npm start          # 启动桌面桌宠
+```
+
+功能：透明无边框置顶窗口、拖拽移动（位置自动保存到 `$DSH_HOME/pet.desktop.json`）、右键菜单（随机散步/摸摸/置顶/点击穿透/重新扫描/退出）、随 DSH agent 状态实时变化、多会话对话框。DSH 未运行时桌宠保持待机动画。
+
+### 方式三：动态插件（开发调试）
 
 在 DSH 会话中通过 Cordis 工具 `cordis_define` / `cordis_run` 加载本仓库 `lib/` 下的 host/client 代码（详见仓库内注释）。动态插件在 DSH 进程重启后丢失，仅用于开发调试。
 
@@ -123,6 +135,10 @@ dsh-codex-pet/
 ├── lib/
 │   ├── index.js          # host 半：迁移 + webServer API + 事件监听
 │   └── client.js         # client 半：渲染、动画、对话框、设置页
+├── desktop/              # 独立桌面应用（Electron，脱离网页）
+│   ├── main.js           # 透明置顶窗口 + 状态轮询 + 配置
+│   ├── preload.js        # IPC 桥
+│   └── renderer/         # 动画渲染（复用 client 逻辑）
 └── docs/
     └── pet-demo.webp     # 示例图
 ```
