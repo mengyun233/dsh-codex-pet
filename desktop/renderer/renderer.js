@@ -73,7 +73,6 @@ let lastEventAt = Date.now()
 let collapsed = {}
 let dismissed = {}
 let prevPhases = {}
-let hoverId = null
 let clickTimers = {}
 
 function loadConfig() {
@@ -188,7 +187,6 @@ async function applyActiveSkin() {
 /** Apply a merged-config update coming from the main process (web panel edits, etc.). */
 function applyConfig(next) {
   if (!next) return
-  console.log('pet-config: apply', JSON.stringify({ name: next.name, scale: next.scale, speed: next.animationSpeed, top: next.alwaysOnTop, through: next.clickThrough, anim: next.animationEnabled, random: next.randomEnabled, idleSec: next.idleFrequencySec, hide: next.hideWhenIdle }))
   const prevName = state.config.name
   const prevScale = state.config.scale
   const prevActive = state.active
@@ -243,8 +241,9 @@ function renderDialogs() {
     dlg.style.left = dialogLeft + 'px'
     dlg.style.transform = 'translateX(-50%)'
     dlg.dataset.sid = ss.id
-    dlg.onmouseenter = () => { hoverId = ss.id; renderDialogs() }
-    dlg.onmouseleave = () => { hoverId = null; renderDialogs() }
+    // Single click = toggle collapse; double click = jump + dismiss.
+    // No hover re-render: the stop button is shown via CSS :hover so clicks
+    // are never lost to a rebuilt subtree.
     dlg.onclick = () => {
       const t = clickTimers[ss.id]
       if (t) {
@@ -267,6 +266,15 @@ function renderDialogs() {
       // then the bubble stays dismissed until that session turns active again.
       if (ss.id) window.petHost.openSession(ss.id).catch(() => {})
     }
+    // Right-click = close this dialog bubble (dismiss without jumping).
+    dlg.oncontextmenu = (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const t = clickTimers[ss.id]
+      if (t) { clearTimeout(t); delete clickTimers[ss.id] }
+      dismissed[ss.id] = true
+      renderDialogs()
+    }
 
     const body = document.createElement('div')
     body.className = 'dialog-body'
@@ -282,8 +290,10 @@ function renderDialogs() {
     }
     dlg.appendChild(body)
 
-    if (hoverId === ss.id && canStop) {
+    if (canStop) {
+      // Rendered always (so clicks hit it), shown only while hovering via CSS.
       const stop = document.createElement('button')
+      stop.type = 'button'
       stop.className = 'dialog-stop'
       stop.title = '终止对话'
       stop.textContent = '⏹'
@@ -567,11 +577,8 @@ document.addEventListener('click', (e) => {
 // ---------- init ----------
 ;(async function init() {
   try {
-    console.log('pet-init: start')
     await loadConfig()
-    console.log('pet-init: config loaded', state.config.name, state.config.scale)
     await refreshPets()
-    console.log('pet-init: pets', state.pets.map((p) => p.dir).join(','), 'active', state.active)
     window.petHost.onState((d) => applyState(d))
     window.petHost.onConfig((c) => applyConfig(c))
     const d = await window.petHost.state()
@@ -579,7 +586,6 @@ document.addEventListener('click', (e) => {
     setInterval(() => {
       window.petHost.state().then(applyState).catch(() => {})
     }, 2000)
-    console.log('pet-init: done')
   } catch (e) {
     console.error('pet-init: failed', e && e.stack ? e.stack : String(e))
   }
