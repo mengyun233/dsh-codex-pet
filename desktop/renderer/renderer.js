@@ -196,7 +196,6 @@ function applyConfig(next) {
   } else if (prevScale !== next.scale || (prevName !== next.name && next.name === state.active)) {
     if (state.active) applyActiveSkin()
   }
-  syncMenuLabels()
 }
 
 function showFrame(row, frame) {
@@ -541,12 +540,9 @@ window.addEventListener('mouseup', () => {
 // pixels of the window still pass clicks through, so this fires where the
 // sprite/dialogs are — the standard behavior for a transparent pet window.)
 document.addEventListener('contextmenu', (e) => {
-  // Dialog right-click (close bubble) is handled by the dialog delegate and
-  // stops propagation; don't double-handle it.
   if (e.target.closest && e.target.closest('.dialog')) return
   e.preventDefault()
-  const { screenX, screenY } = e
-  window.petHost.showMenu(screenX, screenY).catch(() => {})
+  window.petHost.showMenu(e.clientX, e.clientY).catch(() => {})
 })
 
 petImg.addEventListener('dblclick', () => {

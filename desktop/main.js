@@ -351,7 +351,9 @@ ipcMain.handle('pet:showMenu', (_e, x, y) => {
     }
   ]
   const menu = Menu.buildFromTemplate(template)
-  menu.popup({ window: win, x: Math.round(x || 0), y: Math.round(y || 0) })
+  // No x/y: the menu pops at the current mouse position, which is exactly
+  // where the user right-clicked — avoids client/screen coordinate confusion.
+  menu.popup({ window: win })
 })
 
 // ---------- lifecycle ----------
