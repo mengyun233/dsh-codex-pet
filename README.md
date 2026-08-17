@@ -1,4 +1,4 @@
-# dsh-codex-pet
+# dsh-codex-pet   [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 
 把 OpenAI Codex 桌面宠物（Codex Pet）的社区皮肤自动迁移到 DeepSeek Harness（DSH），在 DSH Web 界面右下角渲染一只功能与 Codex 完全一致的桌宠：动画状态、多会话对话框、设置面板，一键迁移、即插即用。
 
