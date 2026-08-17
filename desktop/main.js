@@ -413,6 +413,20 @@ ipcMain.handle('pet:showMenu', (_e, x, y) => {
     },
     { type: 'separator' },
     {
+      label: '打开 DSH',
+      click: () => {
+        // Focus an already-open DSH browser tab if any, then open the app.
+        const wasTop = config.alwaysOnTop !== false
+        if (wasTop && win && !win.isDestroyed()) win.setAlwaysOnTop(false)
+        focusDshBrowserWindow().then(() => {
+          shell.openExternal(DSH_API)
+          if (wasTop && win && !win.isDestroyed()) {
+            setTimeout(() => { if (!win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver') }, 2500)
+          }
+        })
+      }
+    },
+    {
       label: '重新扫描皮肤',
       click: () => { if (!win.isDestroyed()) win.webContents.send('pet:menu', 'refresh') }
     },
