@@ -1,4 +1,4 @@
-# dsh-codex-pet
+# dsh-codex-pet   [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 
 把 OpenAI Codex 桌面宠物（Codex Pet）的社区皮肤自动迁移到 DeepSeek Harness（DSH），在 DSH Web 界面右下角渲染一只功能与 Codex 完全一致的桌宠：动画状态、多会话对话框、设置面板，一键迁移、即插即用。
 
@@ -75,6 +75,7 @@ npm start          # 启动桌面桌宠
 | 双击桌宠 | 互动动画 |
 | 单击对话框 | 折叠 / 展开 |
 | 双击对话框 | 跳转到对应会话并移除该气泡（会话重新活动时气泡恢复） |
+| 右键对话框 | 移除该气泡 |
 | 悬停进行中的对话框 | 显示 ⏹ 终止按钮，点击终止对话 |
 | 设置 → 桌宠 | 皮肤、缩放、速度、行为开关、迁移 |
 
