@@ -284,10 +284,65 @@ ipcMain.handle('pet:state', async () => {
 })
 // Double-click on a dialog: open the DSH web app at that session (same as the
 // web overlay's jump-to-session behavior).
+/**
+ * Bring an already-open DSH web tab's browser window to the foreground, if any.
+ * The pet window is always-on-top, so without this the newly opened tab can
+ * end up hidden behind it; focusing the existing browser window first makes
+ * the deep link appear to "jump to" the already-open DSH page.
+ * @returns true when a matching window was focused.
+ */
+function focusDshBrowserWindow() {
+  return new Promise((resolve) => {
+    const script = [
+      "$ErrorActionPreference = 'SilentlyContinue'",
+      "Add-Type -TypeDefinition 'using System;using System.Text;using System.Runtime.InteropServices;public class FDW{[DllImport(\"user32.dll\")]public static extern bool EnumWindows(EnumProc cb,System.IntPtr l);[DllImport(\"user32.dll\")]public static extern int GetWindowText(System.IntPtr h,System.Text.StringBuilder s,int n);[DllImport(\"user32.dll\")]public static extern bool IsWindowVisible(System.IntPtr h);[DllImport(\"user32.dll\")]public static extern bool SetForegroundWindow(System.IntPtr h);[DllImport(\"user32.dll\")]public static extern System.IntPtr GetForegroundWindow();[DllImport(\"user32.dll\")]public static extern void keybd_event(byte k,byte s,uint f,System.UIntPtr e);public delegate bool EnumProc(System.IntPtr h,System.IntPtr l);}'",
+      "$matches = New-Object System.Collections.ArrayList",
+      "$cb = [FDW+EnumProc]{ param($h,$l)",
+      "  $sb = New-Object System.Text.StringBuilder 256",
+      "  [FDW]::GetWindowText($h,$sb,256) | Out-Null",
+      "  $t = $sb.ToString()",
+      "  if ([FDW]::IsWindowVisible($h) -and ($t -like '*DeepSeek Harness*' -or $t -like '*deepseek-harness*' -or $t -like '*127.0.0.1:3080*')) { [void]$matches.Add($h) }",
+      "  return $true",
+      "}",
+      "[FDW]::EnumWindows($cb,[System.IntPtr]::Zero) | Out-Null",
+      "if ($matches.Count -gt 0) {",
+      "  $h = $matches[0]",
+      "  $fg = [FDW]::GetForegroundWindow()",
+      "  if ($fg -ne $h) {",
+      "    [FDW]::keybd_event(0x12,0,0,0) | Out-Null",
+      "    [FDW]::SetForegroundWindow($h) | Out-Null",
+      "    [FDW]::keybd_event(0x12,0,2,0) | Out-Null",
+      "  }",
+      "  Write-Output 'FOCUSED'",
+      "} else { Write-Output 'NONE' }"
+    ].join('\n')
+    const scriptPath = path.join(os.tmpdir(), 'dsh-codex-pet-focus.ps1')
+    fs.writeFileSync(scriptPath, script, 'utf8')
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], { windowsHide: true }, (_err, stdout) => {
+      const focused = String(stdout || '').includes('FOCUSED')
+      resolve(focused)
+    })
+  })
+}
+
 ipcMain.handle('pet:openSession', async (_e, sessionId) => {
   if (!sessionId) return { ok: false }
   try {
+    // Temporarily drop the pet out of always-on-top so the browser window
+    // (already focused below) is actually visible, not hidden behind the pet.
+    const wasTop = config.alwaysOnTop !== false
+    if (wasTop && win && !win.isDestroyed()) win.setAlwaysOnTop(false)
+    const focused = await focusDshBrowserWindow()
     await shell.openExternal(`${DSH_API}/?session=${encodeURIComponent(sessionId)}`)
+    // The browser may grab focus for the new tab; if we found the DSH window,
+    // pull focus back to it so the jump lands on the already-open DSH page.
+    if (focused) {
+      setTimeout(() => { focusDshBrowserWindow() }, 700)
+    }
+    // Restore topmost after a beat so the pet comes back over the browser.
+    if (wasTop && win && !win.isDestroyed()) {
+      setTimeout(() => { if (!win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver') }, 2500)
+    }
     return { ok: true }
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) }
