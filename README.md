@@ -20,12 +20,16 @@
 
 ### 方式一：作为 profile bundle（推荐）
 
+> ⚠️ **注意包名冲突**：`dsh-codex-pet` 在 npm 上已被另一个同名桌宠插件占用（[skr311/dsh-codex-pet](https://github.com/skr311/dsh-codex-pet)，路由 `/api/pets/*`，与本仓库无关）。**本仓库没有发布到 npm**，请务必使用下面的 **git 源安装**，否则会装到错误插件。
+
 ```bash
 # 在 DSH 安装目录下（profile 名按你的实际使用，如 web）
-dsh plugin --profile web add dsh-codex-pet
+dsh plugin --profile web add github:mengyun233/dsh-codex-pet
 ```
 
-或手动安装：
+> git 源安装会自动把 `dsh-codex-pet` 加入 profile 的 `dsh.profile.bundles`，重启 DSH 后生效。
+
+或手动安装（不使用 `dsh plugin` 时）：
 
 1. 把本仓库复制到 profile 的 `node_modules`：
 
