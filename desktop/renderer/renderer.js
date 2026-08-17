@@ -552,6 +552,29 @@ petImg.addEventListener('dblclick', () => {
   setTimeout(() => { if (anim.queue.length === 0) setBubble(null) }, 1500)
 })
 
+// ---------- smart passthrough ----------
+// Blank (transparent) pixels of the window should let clicks fall through to
+// the desktop; only interactive elements (pet sprite, dialogs, summon button)
+// receive mouse events. We track the cursor via forwarded mouse-move events
+// and tell the main process whether to enable passthrough.
+let lastHoverInteractive = null
+function updatePassthrough(clientX, clientY) {
+  let interactive = false
+  try {
+    const el = document.elementFromPoint(clientX, clientY)
+    if (el) {
+      interactive = !!(el.closest('.pet') || el.closest('.dialog') || el.closest('.summon'))
+    }
+  } catch (e) { /* ignore */ }
+  if (interactive !== lastHoverInteractive) {
+    lastHoverInteractive = interactive
+    window.petHost.setHover(interactive).catch(() => {})
+  }
+}
+window.addEventListener('mousemove', (e) => {
+  updatePassthrough(e.clientX, e.clientY)
+})
+
 // ---------- init ----------
 ;(async function init() {
   try {

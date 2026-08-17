@@ -74,8 +74,24 @@ function applyWindowSettings() {
   const scale = typeof config.scale === 'number' ? config.scale : 1
   win.setSize(Math.max(262, Math.round(280 * scale)), Math.max(180, Math.round(340 * scale)))
   win.setAlwaysOnTop(config.alwaysOnTop !== false, 'screen-saver')
-  win.setIgnoreMouseEvents(config.clickThrough === true, { forward: true })
+  // clickThrough forces full passthrough; otherwise the renderer toggles
+  // interactive areas (pet/dialogs) vs blank transparent pixels.
+  applyMousePassthrough()
 }
+
+let mousePassthrough = false
+/** Sync ignoreMouseEvents: forced by clickThrough, else hover-driven. */
+function applyMousePassthrough() {
+  if (!win || win.isDestroyed()) return
+  const ignore = config.clickThrough === true || mousePassthrough
+  win.setIgnoreMouseEvents(ignore, { forward: true })
+}
+
+/** Renderer reports whether the cursor is over an interactive element. */
+ipcMain.handle('pet:setHover', (_e, interactive) => {
+  mousePassthrough = !interactive
+  applyMousePassthrough()
+})
 
 /** Refresh merged config from disk and push changes to the renderer. */
 function reloadConfig() {
@@ -185,7 +201,7 @@ function createWindow() {
     }, 500)
   })
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'))
-  win.setIgnoreMouseEvents(config.clickThrough === true, { forward: true })
+  applyMousePassthrough()
 
   // diagnostics: forward renderer console to a log file
   const logPath = path.join(os.tmpdir(), 'dsh-codex-pet-renderer.log')

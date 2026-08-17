@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('petHost', {
   saveDesktop: (patch) => ipcRenderer.invoke('pet:saveDesktop', patch),
   saveShared: (patch) => ipcRenderer.invoke('pet:saveShared', patch),
   fitWindow: (w, h, gap) => ipcRenderer.invoke('pet:fitWindow', w, h, gap),
+  setHover: (interactive) => ipcRenderer.invoke('pet:setHover', interactive),
   moveBy: (dx, dy) => ipcRenderer.invoke('pet:moveBy', dx, dy),
   state: () => ipcRenderer.invoke('pet:state'),
   openSession: (sessionId) => ipcRenderer.invoke('pet:openSession', sessionId),
