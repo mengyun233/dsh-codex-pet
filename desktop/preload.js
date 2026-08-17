@@ -14,6 +14,12 @@ contextBridge.exposeInMainWorld('petHost', {
   sheet: (dir) => ipcRenderer.invoke('pet:sheet', dir),
   readPetJson: (dir) => ipcRenderer.invoke('pet:readPetJson', dir),
   quit: () => ipcRenderer.invoke('pet:quit'),
+  showMenu: (x, y) => ipcRenderer.invoke('pet:showMenu', x, y),
+  onMenu: (fn) => {
+    const listener = (_e, act) => fn(act)
+    ipcRenderer.on('pet:menu', listener)
+    return () => ipcRenderer.removeListener('pet:menu', listener)
+  },
   onState: (fn) => {
     const listener = (_e, d) => fn(d)
     ipcRenderer.on('pet:state', listener)

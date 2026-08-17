@@ -1,5 +1,5 @@
 'use strict'
-const { app, BrowserWindow, ipcMain, screen, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, screen, shell, Menu } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
@@ -227,11 +227,8 @@ ipcMain.handle('pet:fitWindow', (_e, spriteW, spriteH, maxGap) => {
   const h = Math.max(180, Math.round((spriteH || 300) + (maxGap || 0) + 60))
   win.setSize(w, h)
 })
-// Menu toggles in the desktop app write back to the SHARED settings
-// (pet.json -> codexPet) so web and desktop modes always agree.
-ipcMain.handle('pet:saveShared', (_e, patch) => {
-  const shared = readSharedConfig()
-  Object.assign(shared, patch || {})
+// Write shared settings (pet.json -> codexPet) back to disk and apply them.
+function writeSharedConfig(shared) {
   try {
     const whole = readJsonFile(SHARED_CFG_PATH) || {}
     whole.codexPet = shared
@@ -242,6 +239,14 @@ ipcMain.handle('pet:saveShared', (_e, patch) => {
   config = mergeConfig()
   applyWindowSettings()
   pushConfig()
+}
+
+// Menu toggles in the desktop app write back to the SHARED settings
+// (pet.json -> codexPet) so web and desktop modes always agree.
+ipcMain.handle('pet:saveShared', (_e, patch) => {
+  const shared = readSharedConfig()
+  Object.assign(shared, patch || {})
+  writeSharedConfig(shared)
   return config
 })
 ipcMain.handle('pet:moveBy', (_e, dx, dy) => {
@@ -304,6 +309,50 @@ ipcMain.handle('pet:readPetJson', (_e, dir) => {
   }
 })
 ipcMain.handle('pet:quit', () => app.quit())
+// Native context menu (popup, never clipped by the small transparent window).
+ipcMain.handle('pet:showMenu', (_e, x, y) => {
+  if (!win || win.isDestroyed()) return
+  const template = [
+    {
+      label: '随机散步',
+      click: () => { if (!win.isDestroyed()) win.webContents.send('pet:menu', 'walk') }
+    },
+    {
+      label: '摸摸',
+      click: () => { if (!win.isDestroyed()) win.webContents.send('pet:menu', 'pet') }
+    },
+    { type: 'separator' },
+    {
+      label: config.alwaysOnTop !== false ? '置顶: 开' : '置顶: 关',
+      click: () => {
+        config.alwaysOnTop = config.alwaysOnTop !== false ? false : true
+        const shared = readSharedConfig()
+        shared.alwaysOnTop = config.alwaysOnTop
+        writeSharedConfig(shared)
+      }
+    },
+    {
+      label: config.clickThrough ? '点击穿透: 开' : '点击穿透: 关',
+      click: () => {
+        config.clickThrough = !config.clickThrough
+        const shared = readSharedConfig()
+        shared.clickThrough = config.clickThrough
+        writeSharedConfig(shared)
+      }
+    },
+    { type: 'separator' },
+    {
+      label: '重新扫描皮肤',
+      click: () => { if (!win.isDestroyed()) win.webContents.send('pet:menu', 'refresh') }
+    },
+    {
+      label: '退出桌宠',
+      click: () => app.quit()
+    }
+  ]
+  const menu = Menu.buildFromTemplate(template)
+  menu.popup({ window: win, x: Math.round(x || 0), y: Math.round(y || 0) })
+})
 
 // ---------- lifecycle ----------
 app.whenReady().then(() => {

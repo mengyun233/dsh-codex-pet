@@ -41,8 +41,6 @@ const FLIP_ROWS = { 0: true, 3: true, 4: true, 5: true, 6: true, 8: true }
 const petImg = document.getElementById('pet')
 const bubble = document.getElementById('bubble')
 const dialogsEl = document.getElementById('dialogs')
-const menuEl = document.getElementById('menu')
-const menuTitle = document.getElementById('menu-title')
 
 // ---------- state ----------
 const state = {
@@ -215,6 +213,59 @@ function playSeq(rows) {
 }
 
 // ---------- dialogs ----------
+// Single delegated handler for the whole dialog strip. The container is never
+// rebuilt, so double-clicks always land on the same listener even when the
+// dialog nodes themselves are re-created between the two clicks.
+function dialogHandler(e) {
+  const dlg = e.target.closest && e.target.closest('.dialog')
+  if (!dlg) return
+  const sid = dlg.dataset && dlg.dataset.sid
+  if (!sid) return
+  // Stop button: cancel the agent, don't treat as a dialog interaction.
+  if (e.target.closest && e.target.closest('.dialog-stop')) {
+    e.stopPropagation()
+    window.petHost.stopSession(sid).then((r) => {
+      setBubble((r && r.ok) ? '已停止' : '无法停止')
+    }).catch(() => {
+      setBubble('停止失败')
+    })
+    setTimeout(() => setBubble(null), 1500)
+    return
+  }
+  if (e.type === 'contextmenu') {
+    e.preventDefault()
+    const t = clickTimers[sid]
+    if (t) { clearTimeout(t); delete clickTimers[sid] }
+    dismissed[sid] = true
+    renderDialogs()
+    return
+  }
+  if (e.type === 'dblclick') {
+    const t = clickTimers[sid]
+    if (t) { clearTimeout(t); delete clickTimers[sid] }
+    dismissed[sid] = true
+    renderDialogs()
+    // Jump to the session in the DSH web app (same as the web overlay).
+    if (sid) window.petHost.openSession(sid).catch(() => {})
+    return
+  }
+  // click
+  const t = clickTimers[sid]
+  if (t) {
+    clearTimeout(t)
+    delete clickTimers[sid]
+    return
+  }
+  clickTimers[sid] = setTimeout(() => {
+    delete clickTimers[sid]
+    collapsed[sid] = !collapsed[sid]
+    renderDialogs()
+  }, 220)
+}
+dialogsEl.addEventListener('click', dialogHandler)
+dialogsEl.addEventListener('dblclick', dialogHandler)
+dialogsEl.addEventListener('contextmenu', dialogHandler)
+
 function renderDialogs() {
   const sorted = (state.sessions || []).slice().sort((a, b) => (b.at || 0) - (a.at || 0))
   const shown = sorted.filter((ss) => ss.phase !== 'idle' && !dismissed[ss.id]).slice(0, 5)
@@ -241,40 +292,6 @@ function renderDialogs() {
     dlg.style.left = dialogLeft + 'px'
     dlg.style.transform = 'translateX(-50%)'
     dlg.dataset.sid = ss.id
-    // Single click = toggle collapse; double click = jump + dismiss.
-    // No hover re-render: the stop button is shown via CSS :hover so clicks
-    // are never lost to a rebuilt subtree.
-    dlg.onclick = () => {
-      const t = clickTimers[ss.id]
-      if (t) {
-        clearTimeout(t)
-        delete clickTimers[ss.id]
-        return
-      }
-      clickTimers[ss.id] = setTimeout(() => {
-        delete clickTimers[ss.id]
-        collapsed[ss.id] = !collapsed[ss.id]
-        renderDialogs()
-      }, 220)
-    }
-    dlg.ondblclick = () => {
-      const t = clickTimers[ss.id]
-      if (t) { clearTimeout(t); delete clickTimers[ss.id] }
-      dismissed[ss.id] = true
-      renderDialogs()
-      // Jump to the session in the DSH web app (same as the web overlay),
-      // then the bubble stays dismissed until that session turns active again.
-      if (ss.id) window.petHost.openSession(ss.id).catch(() => {})
-    }
-    // Right-click = close this dialog bubble (dismiss without jumping).
-    dlg.oncontextmenu = (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      const t = clickTimers[ss.id]
-      if (t) { clearTimeout(t); delete clickTimers[ss.id] }
-      dismissed[ss.id] = true
-      renderDialogs()
-    }
 
     const body = document.createElement('div')
     body.className = 'dialog-body'
@@ -297,15 +314,6 @@ function renderDialogs() {
       stop.className = 'dialog-stop'
       stop.title = '终止对话'
       stop.textContent = '⏹'
-      stop.onclick = (e) => {
-        e.stopPropagation()
-        window.petHost.stopSession(ss.id).then((r) => {
-          setBubble((r && r.ok) ? '已停止' : '无法停止')
-        }).catch(() => {
-          setBubble('停止失败')
-        })
-        setTimeout(() => setBubble(null), 1500)
-      }
       dlg.appendChild(stop)
     } else if (statusIcon) {
       const st = document.createElement('div')
@@ -327,28 +335,8 @@ function setBubble(text) {
   }
 }
 
-// ---------- menu ----------
-function showMenu(x, y) {
-  const active = state.pets.find((p) => p.dir === state.active)
-  menuTitle.textContent = active ? String(active.displayName || active.id) : ''
-  menuEl.style.left = x + 'px'
-  menuEl.style.top = y + 'px'
-  menuEl.hidden = false
-  syncMenuLabels()
-}
-function hideMenu() { menuEl.hidden = true }
-function syncMenuLabels() {
-  const buttons = menuEl.querySelectorAll('button')
-  buttons.forEach((b) => {
-    if (b.dataset.act === 'toggle-top') b.textContent = '置顶: ' + (state.config.alwaysOnTop !== false ? '开' : '关')
-    if (b.dataset.act === 'toggle-through') b.textContent = '点击穿透: ' + (state.config.clickThrough ? '开' : '关')
-  })
-}
-menuEl.addEventListener('click', (e) => {
-  const act = e.target.dataset && e.target.dataset.act
-  if (!act) return
-  hideMenu()
-  const cfg = state.config
+// ---------- menu (native Electron menu, built in main) ----------
+window.petHost.onMenu((act) => {
   if (act === 'walk') {
     anim.walkDir = Math.random() < 0.5 ? -1 : 1
     anim.walkUntil = Date.now() + 2000 + Math.random() * 2000
@@ -356,16 +344,8 @@ menuEl.addEventListener('click', (e) => {
     setBubble('开心！')
     playSeq([[Math.random() < 0.5 ? 3 : 4, 900]])
     setTimeout(() => { if (anim.queue.length === 0) setBubble(null) }, 1600)
-  } else if (act === 'toggle-top') {
-    cfg.alwaysOnTop = cfg.alwaysOnTop !== false ? false : true
-    saveConfig({ alwaysOnTop: cfg.alwaysOnTop })
-  } else if (act === 'toggle-through') {
-    cfg.clickThrough = !cfg.clickThrough
-    saveConfig({ clickThrough: cfg.clickThrough })
   } else if (act === 'refresh') {
     refreshPets()
-  } else if (act === 'quit') {
-    window.petHost.quit()
   }
 })
 
@@ -523,7 +503,6 @@ petImg.addEventListener('mousedown', (e) => {
   anim.sleeping = false
   drag = { sx: e.screenX, sy: e.screenY, lastX: e.screenX, lastY: e.screenY, moved: false }
   petImg.classList.add('dragging')
-  hideMenu()
 })
 
 window.addEventListener('mousemove', (e) => {
@@ -558,9 +537,16 @@ window.addEventListener('mouseup', () => {
   }
 })
 
-petImg.addEventListener('contextmenu', (e) => {
+// Right-click anywhere in the pet window opens the native menu. (Transparent
+// pixels of the window still pass clicks through, so this fires where the
+// sprite/dialogs are — the standard behavior for a transparent pet window.)
+document.addEventListener('contextmenu', (e) => {
+  // Dialog right-click (close bubble) is handled by the dialog delegate and
+  // stops propagation; don't double-handle it.
+  if (e.target.closest && e.target.closest('.dialog')) return
   e.preventDefault()
-  showMenu(e.clientX, e.clientY)
+  const { screenX, screenY } = e
+  window.petHost.showMenu(screenX, screenY).catch(() => {})
 })
 
 petImg.addEventListener('dblclick', () => {
@@ -568,10 +554,6 @@ petImg.addEventListener('dblclick', () => {
   setBubble('嘿嘿～')
   playSeq([[Math.random() < 0.5 ? 3 : 4, 900]])
   setTimeout(() => { if (anim.queue.length === 0) setBubble(null) }, 1500)
-})
-
-document.addEventListener('click', (e) => {
-  if (!menuEl.hidden && !menuEl.contains(e.target)) hideMenu()
 })
 
 // ---------- init ----------
