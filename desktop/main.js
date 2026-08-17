@@ -5,6 +5,23 @@ const fs = require('fs')
 const os = require('os')
 const { execFile } = require('child_process')
 
+// ---------- single instance ----------
+// Only one desktop pet may run at a time, no matter how it is launched
+// (npm start, the web panel's "desktop mode", the menu, ...). A second
+// instance quits immediately; the first one is brought to the foreground.
+const gotSingleLock = app.requestSingleInstanceLock()
+if (!gotSingleLock) {
+  app.quit()
+}
+app.on('second-instance', () => {
+  // Another pet instance tried to start — focus this one instead.
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  }
+})
+
 const DSH_API = process.env.DSH_WEB_URL || 'http://127.0.0.1:3080'
 const DSH_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
 const PETS_DIR = process.env.DSH_PETS || path.join(DSH_HOME, 'pets')
@@ -285,59 +302,69 @@ ipcMain.handle('pet:state', async () => {
 // Double-click on a dialog: open the DSH web app at that session (same as the
 // web overlay's jump-to-session behavior).
 /**
- * Bring an already-open DSH web tab's browser window to the foreground, if any.
- * Windows restricts SetForegroundWindow to the foreground process, so this uses
- * the classic focus-stealing workaround: restore the window if minimized, hold
- * Alt, SetForegroundWindow + BringWindowToTop, release Alt, and retry a few
- * times until the foreground window actually is the target.
- * @returns true when a matching window was found and brought to foreground.
+ * Try to activate an already-open DSH tab in a browser (Edge/Chrome) and
+ * bring its window to the foreground — WITHOUT opening a new window.
+ *
+ * Uses UI Automation: finds a TabItem whose name contains the DSH web app
+ * title (works even when DSH is a background tab, where the window title
+ * shows the active tab instead), selects it, and raises its window.
+ *
+ * @returns true when a DSH tab was found and activated; false when DSH is
+ *   not open in any browser (caller then falls back to openExternal).
  */
 function focusDshBrowserWindow() {
   return new Promise((resolve) => {
     const script = [
       "$ErrorActionPreference = 'SilentlyContinue'",
-      "Add-Type -TypeDefinition 'using System;using System.Text;using System.Threading;using System.Runtime.InteropServices;public class FDW{[DllImport(\"user32.dll\")]public static extern bool EnumWindows(EnumProc cb,System.IntPtr l);[DllImport(\"user32.dll\")]public static extern int GetWindowText(System.IntPtr h,System.Text.StringBuilder s,int n);[DllImport(\"user32.dll\")]public static extern bool IsWindowVisible(System.IntPtr h);[DllImport(\"user32.dll\")]public static extern bool SetForegroundWindow(System.IntPtr h);[DllImport(\"user32.dll\")]public static extern System.IntPtr GetForegroundWindow();[DllImport(\"user32.dll\")]public static extern bool BringWindowToTop(System.IntPtr h);[DllImport(\"user32.dll\")]public static extern bool ShowWindow(System.IntPtr h,int c);[DllImport(\"user32.dll\")]public static extern void keybd_event(byte k,byte s,uint f,System.UIntPtr e);[DllImport(\"user32.dll\")]public static extern uint GetWindowThreadProcessId(System.IntPtr h,ref int l);[DllImport(\"user32.dll\")]public static extern bool AttachThreadInput(uint a,uint b,bool c);[DllImport(\"kernel32.dll\")]public static extern uint GetCurrentThreadId();public delegate bool EnumProc(System.IntPtr h,System.IntPtr l);}'",
-      "$matches = New-Object System.Collections.ArrayList",
-      "$browsers = @{}",
-      "Get-Process -Name msedge,chrome,firefox,brave,opera -ErrorAction SilentlyContinue | ForEach-Object { $browsers[$_.MainWindowHandle] = $_.ProcessName.ToLowerInvariant() }",
-      "$cb = [FDW+EnumProc]{ param($h,$l)",
-      "  $sb = New-Object System.Text.StringBuilder 256",
-      "  [FDW]::GetWindowText($h,$sb,256) | Out-Null",
-      "  $t = $sb.ToString()",
-      "  if (-not [FDW]::IsWindowVisible($h) -or $t.Length -lt 5) { return $true }",
-      "  # Only browser windows (MainWindowHandle must belong to a browser process).",
-      "  if (-not $browsers.ContainsKey($h)) { return $true }",
-      "  if ($t -like '*DeepSeek Harness*' -or $t -like '*deepseek-harness*' -or $t -like '*127.0.0.1:3080*') { [void]$matches.Add($h) }",
-      "  return $true",
+      "Add-Type -AssemblyName UIAutomationClient",
+      "Add-Type -AssemblyName UIAutomationTypes",
+      "$root = [System.Windows.Automation.AutomationElement]::RootElement",
+      "$targetTab = $null",
+      "$targetWin = $null",
+      "Get-Process -Name msedge,chrome,firefox,brave,opera -ErrorAction SilentlyContinue | ForEach-Object {",
+      "  if ($targetTab) { return }",
+      "  $winCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $_.Id)",
+      "  $windows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $winCond)",
+      "  foreach ($w in $windows) {",
+      "    if ($targetTab) { break }",
+      "    $all = $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)",
+      "    foreach ($el in $all) {",
+      "      $name = $el.Current.Name",
+      "      if (($name -like '*DeepSeek Harness*' -or $name -like '*deepseek-harness*' -or $name -like '*127.0.0.1:3080*') -and $el.Current.ControlType.ProgrammaticName -eq 'ControlType.TabItem') {",
+      "        $targetTab = $el; $targetWin = $w; break",
+      "      }",
+      "    }",
+      "  }",
       "}",
-      "[FDW]::EnumWindows($cb,[System.IntPtr]::Zero) | Out-Null",
-      "if ($matches.Count -eq 0) { Write-Output 'NONE'; exit }",
-      "$target = $matches[0]",
-      "# restore if minimized, then force to foreground",
-      "[FDW]::ShowWindow($target, 9) | Out-Null",
-      "$tid = [FDW]::GetWindowThreadProcessId($target,[System.IntPtr]::Zero)",
-      "$ctid = [FDW]::GetCurrentThreadId()",
-      "[FDW]::AttachThreadInput($ctid,$tid,$true) | Out-Null",
-      "[FDW]::keybd_event(0x12,0,0,0) | Out-Null",
-      "[FDW]::keybd_event(0x11,0,0,0) | Out-Null",
-      "for ($i = 0; $i -lt 3; $i++) {",
-      "  [FDW]::SetForegroundWindow($target) | Out-Null",
-      "  [FDW]::BringWindowToTop($target) | Out-Null",
-      "  [FDW]::keybd_event(0x11,0,2,0) | Out-Null",
-      "  [FDW]::keybd_event(0x12,0,2,0) | Out-Null",
-      "  Start-Sleep -Milliseconds 120",
-      "  if ([FDW]::GetForegroundWindow() -eq $target) { break }",
-      "  [FDW]::keybd_event(0x12,0,0,0) | Out-Null",
-      "  [FDW]::keybd_event(0x11,0,0,0) | Out-Null",
+      "if (-not $targetTab) { Write-Output 'NONE'; exit }",
+      "try { $sel = $targetTab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern); $sel.Select() } catch { }",
+      "try {",
+      "  $wp = $targetWin.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern)",
+      "  if ($wp.Current.WindowVisualState -ne [System.Windows.Automation.WindowVisualState]::Normal) { $wp.SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Normal) }",
+      "} catch { }",
+      "Add-Type -TypeDefinition 'using System;using System.Threading;using System.Runtime.InteropServices;public class UAF{[DllImport(\"user32.dll\")]public static extern bool SetForegroundWindow(System.IntPtr h);[DllImport(\"user32.dll\")]public static extern System.IntPtr GetForegroundWindow();[DllImport(\"user32.dll\")]public static extern bool BringWindowToTop(System.IntPtr h);[DllImport(\"user32.dll\")]public static extern bool ShowWindow(System.IntPtr h,int c);[DllImport(\"user32.dll\")]public static extern void keybd_event(byte k,byte s,uint f,System.UIntPtr e);[DllImport(\"user32.dll\")]public static extern uint GetWindowThreadProcessId(System.IntPtr h,ref uint l);[DllImport(\"user32.dll\")]public static extern bool AttachThreadInput(uint a,uint b,bool c);[DllImport(\"kernel32.dll\")]public static extern uint GetCurrentThreadId();}'",
+      "$hwnd = [System.IntPtr]$targetWin.Current.NativeWindowHandle",
+      "[UAF]::ShowWindow($hwnd,9) | Out-Null",
+      "$tid = 0; [UAF]::GetWindowThreadProcessId($hwnd,[ref]$tid) | Out-Null",
+      "$ctid = [UAF]::GetCurrentThreadId()",
+      "[UAF]::AttachThreadInput($ctid,$tid,$true) | Out-Null",
+      "[UAF]::keybd_event(0x12,0,0,0) | Out-Null",
+      "for ($i = 0; $i -lt 4; $i++) {",
+      "  [UAF]::SetForegroundWindow($hwnd) | Out-Null",
+      "  [UAF]::BringWindowToTop($hwnd) | Out-Null",
+      "  [UAF]::keybd_event(0x12,0,2,0) | Out-Null",
+      "  Start-Sleep -Milliseconds 150",
+      "  if ([UAF]::GetForegroundWindow() -eq $hwnd) { break }",
+      "  [UAF]::keybd_event(0x12,0,0,0) | Out-Null",
       "}",
-      "[FDW]::AttachThreadInput($ctid,$tid,$false) | Out-Null",
-      "if ([FDW]::GetForegroundWindow() -eq $target) { Write-Output 'FOCUSED' } else { Write-Output 'RETRIED' }"
+      "[UAF]::AttachThreadInput($ctid,$tid,$false) | Out-Null",
+      "Write-Output 'TAB-FOCUSED'"
     ].join('\n')
     const scriptPath = path.join(os.tmpdir(), 'dsh-codex-pet-focus.ps1')
     fs.writeFileSync(scriptPath, script, 'utf8')
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], { windowsHide: true }, (_err, stdout) => {
-      const focused = String(stdout || '').includes('FOCUSED')
-      resolve(focused)
+      const ok = String(stdout || '').includes('TAB-FOCUSED')
+      resolve(ok)
     })
   })
 }
@@ -349,14 +376,13 @@ ipcMain.handle('pet:openSession', async (_e, sessionId) => {
     // is actually visible, not hidden behind the pet.
     const wasTop = config.alwaysOnTop !== false
     if (wasTop && win && !win.isDestroyed()) win.setAlwaysOnTop(false)
-    // Open the deep link FIRST: the browser activates/creates the DSH tab, so
-    // the Edge window title becomes "DeepSeek Harness …" and we can then find
-    // and focus that exact window (title matching fails while DSH is a
-    // background tab because the window title shows the active tab).
-    await shell.openExternal(`${DSH_API}/?session=${encodeURIComponent(sessionId)}`)
-    // Wait for the browser to switch the active tab, then bring that window
-    // to the foreground.
-    setTimeout(() => { focusDshBrowserWindow() }, 800)
+    // Prefer activating an already-open DSH tab: brings the existing browser
+    // window to the foreground WITHOUT opening a new window. Only when DSH is
+    // not open anywhere do we open it fresh.
+    const activated = await focusDshBrowserWindow()
+    if (!activated) {
+      await shell.openExternal(`${DSH_API}/?session=${encodeURIComponent(sessionId)}`)
+    }
     // Restore topmost after a beat so the pet comes back over the browser.
     if (wasTop && win && !win.isDestroyed()) {
       setTimeout(() => { if (!win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver') }, 3000)
@@ -433,15 +459,16 @@ ipcMain.handle('pet:showMenu', (_e, x, y) => {
     {
       label: '打开 DSH',
       click: () => {
-        // Open first (activates the DSH tab so the window title matches),
-        // then bring that browser window to the foreground.
         const wasTop = config.alwaysOnTop !== false
         if (wasTop && win && !win.isDestroyed()) win.setAlwaysOnTop(false)
-        shell.openExternal(DSH_API)
-        setTimeout(() => { focusDshBrowserWindow() }, 800)
-        if (wasTop && win && !win.isDestroyed()) {
-          setTimeout(() => { if (!win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver') }, 3000)
-        }
+        // Activate the already-open DSH tab if any (no new window); otherwise
+        // open the app for the first time.
+        focusDshBrowserWindow().then((activated) => {
+          if (!activated) shell.openExternal(DSH_API)
+          if (wasTop && win && !win.isDestroyed()) {
+            setTimeout(() => { if (!win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver') }, 3000)
+          }
+        })
       }
     },
     {
